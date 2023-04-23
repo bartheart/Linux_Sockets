@@ -1,128 +1,131 @@
-//Author: Bemnet Merkebu
-//CSCE 3600
-//Minor4 Client
-//Using_Linux_Sockets 
 
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <arpa/inet.h>
+
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <errno.h>
-#include <string.h>
+#include <netdb.h>
+#include <sys/time.h>
 #include <sys/types.h>
-#include <limits.h>
-#include <math.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 
-#define BUFFER_SIZE 1025
-#define NUM_MESSAGE 10  
+#define PING_MSG_SIZE 32
 
-//main function
-int main(int argc, char *argv[]){
-    int sockfd = 0;
-    char buffer[BUFFER_SIZE];
-    struct sockaddr_in servaddr;
-
-    //check command line args
-    if (argc != 3){
-        printf("Usage: %s <server hostname> <port>\n", argv[0]);
+int main(int argc, char *argv[]) {
+    if (argc != 3) {
+        fprintf(stderr, "Usage: %s <hostname> <port>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
-    char *serverHostname = argv[1];
-    int serverPort = atoi(argv[2]);
+    char *hostname = argv[1];
+    int port = atoi(argv[2]);
 
-    //check the host exist
-    struct hostnet *server = gethostbyname(serverHostname);
-    if( server == NULL){
-        fprintf(stderr, "Error: no such host as%s\n", serverHostname);
+    struct hostent *hostinfo = gethostbyname(hostname);
+    if (hostinfo == NULL) {
+        fprintf(stderr, "Unknown host %s.\n", hostname);
         exit(EXIT_FAILURE);
     }
 
-    //create socket file descriptor
-    if((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0){
-        perror("Socket creation failed");
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    server_addr.sin_addr = *((struct in_addr *) hostinfo->h_addr);
+
+    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        perror("socket() error");
         exit(EXIT_FAILURE);
     }
 
-    //set to 0
-    memset(&servaddr, 0 , sizeof(servaddr));
-    memset(buffer, 0, sizeof(buffer));
+    struct timeval tv;
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv)) < 0) {
+        perror("setsockopt() error");
+        exit(EXIT_FAILURE);
+    }
 
-    //fill server info
-    servaddr.sin_family = AF_INET; //IPv4
-    servaddr.sin_port = htons(serverPort);
-    servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    struct sockaddr_in client_addr;
+    memset(&client_addr, 0, sizeof(client_addr));
+    client_addr.sin_family = AF_INET;
+    client_addr.sin_port = htons(0);
+    client_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    //intitalize statstics variables
-    int numSnt = 0, numRcvd = 0, numLst = 0;
-    int min_rtt = INT_MAX;
-    int max_rtt = INT_MIN;
-    double avg_rtt = 0.0;
+    if (bind(sockfd, (struct sockaddr *)&client_addr, sizeof(client_addr)) < 0) {
+        perror("bind() error");
+        exit(EXIT_FAILURE);
+    }
 
-    //Set up the file descriptor set for select
-    fd_set fds;
-    FD_ZERO(&fds);
-    FD_SET(sockfd, &fds);
+    int msg_count = 10;
+    int rcvd_count = 0;
+    int loss_count = 0;
+    double min_rtt = 1000000.0;
+    double max_rtt = 0.0;
+    double total_rtt = 0.0;
 
-    for (int i = 0; i < NUM_MESSAGE; i++){
-        numSnt++;
-        // Send PONG message back to client
-        char ping_msg[BUFFER_SIZE];
-        sprintf(ping_msg, "PING %d", i);
-        sendto(sockfd, ping_msg, strlen(ping_msg), 0, (struct sockaddr*)&servaddr, sizeof(servaddr));
-    
+    for (int i = 1; i <= msg_count; ++i) {
+        char ping_msg[PING_MSG_SIZE];
+        snprintf(ping_msg, PING_MSG_SIZE, "Ping message %d", i);
 
-        // Record the send time
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
+        struct timeval start_time, end_time;
+        gettimeofday(&start_time, NULL);
 
-        // Wait for response using selectint n = 0;
-        struct timeval timeout = {1, 0}; // Wait for 1 second
-        int ready = select(sockfd+1, &fds, NULL, NULL, &timeout);
-        if (ready == -1) {
-            perror("select failed");
+        if (sendto(sockfd, ping_msg, strlen(ping_msg), 0, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+            perror("sendto() error");
             exit(EXIT_FAILURE);
         }
-        else if (ready == 0) {
-            printf("%d: Sent... Time Out\n", i+1);
-        }
-        else {
-            int n = 0;
-            if((n = recvfrom(sockfd, buffer, BUFFER_SIZE, 0, NULL, NULL)) < 0){
-                perror("recvfrom failed");
-                exit(EXIT_FAILURE);
+
+        printf("%d: Sent... ", i);
+
+        char pong_msg[PING_MSG_SIZE];
+        socklen_t server_len = sizeof(server_addr);
+        ssize_t recv_len = recvfrom(sockfd, pong_msg, PING_MSG_SIZE, 0, (struct sockaddr *)&server_addr, &server_len);
+
+        if (recv_len < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                printf("Timed Out\n");
+                loss_count++;
             } else {
-                buffer[n] = '\0';
-
-                // Record the receive time
-                gettimeofday(&end, NULL);
-
-                // Calculate the RTT and update the statistics variables
-                double rtt = (end.tv_sec - start.tv_sec) * 1000.0 + (end.tv_usec - start.tv_usec) / 1000.0;
-                if (rtt < min_rtt) {
-                    min_rtt = rtt;
-                }
-                if (rtt > max_rtt) {
-                    max_rtt = rtt;
-                }
-                avg_rtt += rtt;
-                numRcvd++;
-
-                printf("%d: Sent... RTT=%.3f ms\n", i, rtt);
+                perror("recvfrom() error");
+                exit(EXIT_FAILURE);
             }
+        } 
+        else {
+            gettimeofday(&end_time, NULL);
+
+            double rtt = (end_time.tv_sec - start_time.tv_sec) * 1000.0 + (end_time.tv_usec - start_time.tv_usec) / 1000.0;
+            if (rtt < min_rtt) {
+                min_rtt = rtt;
+            }
+            if (rtt > max_rtt) {
+                max_rtt = rtt;
+            }
+            total_rtt += rtt;
+            rcvd_count++;
+
+            printf("RTT=%.3f ms\n", rtt);
         }
+        
 
     //sleep
     sleep(1);
     }
 
     // Calculate the average RTT
-    if (numRcvd > 0) {
-        avg_rtt /= numRcvd;
+    if (rcvd_count > 0) {
+        total_rtt /= rcvd_count;
     }
+
+    //have to calculate loss precentage
+
+    // !!!!!!!!!!!!!!!!!!!!!!!!!
+
+    //output analysis
+    printf("%d pkts xmitted, %d pckts rcvd, %d pkt loss\n", msg_count, rcvd_count, loss_count);
+    printf("min: %f ms, max: %f ms, avg: %f ms", min_rtt, max_rtt, total_rtt);
     return 0;
 }
