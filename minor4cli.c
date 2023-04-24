@@ -1,4 +1,7 @@
-
+//Author: Bemnet Merkebu
+//CSCE 3600
+//Minor4 Client
+//Using_Linux_Sockets 
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,12 +17,15 @@
 
 #define PING_MSG_SIZE 32
 
+//main function
 int main(int argc, char *argv[]) {
+    //check the number of arguments
     if (argc != 3) {
         fprintf(stderr, "Usage: %s <hostname> <port>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
+    //initate hostname and port number variables
     char *hostname = argv[1];
     int port = atoi(argv[2]);
 
@@ -30,11 +36,14 @@ int main(int argc, char *argv[]) {
     }
 
     struct sockaddr_in server_addr;
+
+    //filling server information
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
     server_addr.sin_addr = *((struct in_addr *) hostinfo->h_addr);
 
+    //create socket file descriptor
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) {
         perror("socket() error");
@@ -49,17 +58,20 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    //intitate address structs
     struct sockaddr_in client_addr;
     memset(&client_addr, 0, sizeof(client_addr));
     client_addr.sin_family = AF_INET;
     client_addr.sin_port = htons(0);
     client_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
+    //bind the socket with client address
     if (bind(sockfd, (struct sockaddr *)&client_addr, sizeof(client_addr)) < 0) {
         perror("bind() error");
         exit(EXIT_FAILURE);
     }
 
+    //initiate statisitcs variables
     int msg_count = 10;
     int rcvd_count = 0;
     int loss_count = 0;
@@ -67,6 +79,7 @@ int main(int argc, char *argv[]) {
     double max_rtt = 0.0;
     double total_rtt = 0.0;
 
+    //loop over total message transmitted
     for (int i = 1; i <= msg_count; ++i) {
         char ping_msg[PING_MSG_SIZE];
         snprintf(ping_msg, PING_MSG_SIZE, "Ping message %d", i);
@@ -74,6 +87,7 @@ int main(int argc, char *argv[]) {
         struct timeval start_time, end_time;
         gettimeofday(&start_time, NULL);
 
+        //send PING msg to server
         if (sendto(sockfd, ping_msg, strlen(ping_msg), 0, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
             perror("sendto() error");
             exit(EXIT_FAILURE);
@@ -85,6 +99,7 @@ int main(int argc, char *argv[]) {
         socklen_t server_len = sizeof(server_addr);
         ssize_t recv_len = recvfrom(sockfd, pong_msg, PING_MSG_SIZE, 0, (struct sockaddr *)&server_addr, &server_len);
 
+        //check if package is lost
         if (recv_len < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 printf("Timed Out\n");
@@ -94,6 +109,7 @@ int main(int argc, char *argv[]) {
                 exit(EXIT_FAILURE);
             }
         } 
+        //recived packages
         else {
             gettimeofday(&end_time, NULL);
 
@@ -107,11 +123,12 @@ int main(int argc, char *argv[]) {
             total_rtt += rtt;
             rcvd_count++;
 
-            printf("RTT=%.3f ms\n", rtt);
+            //print response time
+            printf("RTT=%.6f ms\n", rtt);
         }
         
 
-    //sleep
+    //sleep 
     sleep(1);
     }
 
@@ -120,12 +137,11 @@ int main(int argc, char *argv[]) {
         total_rtt /= rcvd_count;
     }
 
-    //have to calculate loss precentage
-
-    // !!!!!!!!!!!!!!!!!!!!!!!!!
+    //calculate loss precentage
+    double loss_percentage = (double) loss_count / msg_count * 100.0;
 
     //output analysis
-    printf("%d pkts xmitted, %d pckts rcvd, %d pkt loss\n", msg_count, rcvd_count, loss_count);
+    printf("%d pkts xmited, %d pkts rcvd, %.0f%% pkt loss\n", msg_count, rcvd_count, loss_percentage);
     printf("min: %f ms, max: %f ms, avg: %f ms", min_rtt, max_rtt, total_rtt);
     return 0;
 }
