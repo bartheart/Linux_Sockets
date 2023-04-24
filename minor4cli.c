@@ -142,6 +142,6 @@ int main(int argc, char *argv[]) {
 
     //output analysis
     printf("%d pkts xmited, %d pkts rcvd, %.0f%% pkt loss\n", msg_count, rcvd_count, loss_percentage);
-    printf("min: %f ms, max: %f ms, avg: %f ms", min_rtt, max_rtt, total_rtt);
+    printf("min: %f ms, max: %f ms, avg: %f ms\n", min_rtt, max_rtt, total_rtt);
     return 0;
 }
